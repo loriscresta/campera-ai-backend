@@ -173,3 +173,99 @@ async def proxy_overpass(request: OverpassProxyRequest):
             last_err = str(e)
             continue
     raise HTTPException(503, f"Overpass non disponibile: {last_err}")
+
+
+# ── Discover POIs for multiple stops (Agent 4 server-side) ────────────────────
+class DiscoverPOIsRequest(BaseModel):
+    soste: List[dict]          # [{lat, lng, giorno, nome}, ...]
+    moods: List[str] = ["natura"]
+    con_bambini: bool = False
+    con_animali: bool = False
+
+@app.post("/api/discover-pois")
+async def api_discover_pois(request: DiscoverPOIsRequest):
+    """
+    Agent 4 server-side: OSM parallelo per tutte le soste.
+    Invece di N soste × M categorie = N*M query seriali nel browser,
+    le eseguiamo tutte in asyncio.gather → 5-10s per qualsiasi numero di soste.
+    """
+    from tools.osm import search_pois_overpass, EMOJI_MAP, _haversine
+
+    MOOD_TO_CATS = {
+        "natura":      ["natura", "panorami", "borghi"],
+        "storia":      ["attrazioni", "borghi", "panorami"],
+        "gastronomia": ["ristoranti", "borghi", "attrazioni"],
+        "relax":       ["spiagge", "panorami", "natura"],
+        "avventura":   ["natura", "panorami", "attrazioni"],
+        "famiglia":    ["attrazioni", "spiagge", "natura"],
+        "mare":        ["spiagge", "natura", "panorami"],
+        "montagna":    ["natura", "panorami", "attrazioni"],
+    }
+
+    # Categorie da cercare per questa sessione
+    cats: list = []
+    for mood in (request.moods or ["natura"]):
+        for c in MOOD_TO_CATS.get(mood, ["attrazioni", "natura", "panorami"]):
+            if c not in cats:
+                cats.append(c)
+    cats = cats[:4]  # max 4 categorie per evitare overhead
+
+    async def _search_stop(sosta: dict):
+        lat, lng = sosta.get("lat"), sosta.get("lng")
+        if not lat or not lng:
+            return {"sostaGiorno": sosta.get("giorno", 0), "pois": [], "gemmeCount": 0}
+
+        # Cerca tutte le categorie in parallelo per questa sosta
+        results = await asyncio.gather(*[
+            search_pois_overpass(lat, lng, cat, radius_km=20, limit=20)
+            for cat in cats
+        ], return_exceptions=True)
+
+        all_pois = []
+        seen = set()
+        for pois in results:
+            if isinstance(pois, Exception):
+                continue
+            for p in (pois or []):
+                key = p["nome"].lower().strip()
+                if key in seen or len(key) < 3:
+                    continue
+                seen.add(key)
+                all_pois.append(p)
+
+        # Ordina per distanza, prendi top 8
+        all_pois.sort(key=lambda x: x.get("distanza_km", 99))
+        top = all_pois[:8]
+        gemme = sum(1 for p in top if p.get("categoria") in ("borghi", "panorami"))
+
+        # Normalizza per frontend (stesso formato di agents34.js)
+        pois_out = [{
+            "nome": p["nome"],
+            "lat": p["lat"],
+            "lng": p["lng"],
+            "categoria": p["categoria"],
+            "emoji": p.get("emoji", "📍"),
+            "distanzaKm": round(p.get("distanza_km", 0), 1),
+            "distKm": round(p.get("distanza_km", 0), 1),
+            "isGemma": p.get("categoria") in ("borghi", "panorami"),
+            "fonte": "osm_backend",
+            "compatibilita_motivo": f"{p.get('emoji','📍')} {p.get('categoria','poi')} a {round(p.get('distanza_km',0),1)}km",
+        } for p in top]
+
+        return {
+            "sostaGiorno": sosta.get("giorno", 0),
+            "pois": pois_out,
+            "gemmeCount": gemme,
+        }
+
+    # Tutte le soste in parallelo
+    results = await asyncio.gather(*[_search_stop(s) for s in request.soste], return_exceptions=True)
+
+    output = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            output.append({"sostaGiorno": request.soste[i].get("giorno", i), "pois": [], "gemmeCount": 0})
+        else:
+            output.append(r)
+
+    return {"stops": output, "total_pois": sum(len(r["pois"]) for r in output)}
