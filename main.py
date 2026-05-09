@@ -46,7 +46,18 @@ async def health():
         "mapbox": bool(settings.mapbox_token),
         "anthropic": bool(settings.anthropic_api_key),
     }
-
+# ── Debug (temporaneo) ─────────────────────────────────────────────
+@app.get("/api/debug")
+async def debug_env():
+    import os
+    raw_key = os.getenv("ANTHROPIC_API_KEY", "")
+    return {
+        "raw_key_len": len(raw_key),
+        "raw_key_preview": (raw_key[:6] + "..." + raw_key[-4:]) if len(raw_key) > 10 else f"EMPTY({len(raw_key)})",
+        "raw_key_starts_sk": raw_key.startswith("sk-"),
+        "settings_key_len": len(settings.anthropic_api_key),
+        "all_env_keys": sorted(os.environ.keys()),
+    }
 # ── Generate Trip ──────────────────────────────────────────────────
 @app.post("/api/generate-trip", response_model=TripResponse)
 async def api_generate_trip(request: TripRequest):
