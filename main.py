@@ -159,14 +159,23 @@ async def proxy_overpass(request: OverpassProxyRequest):
     import httpx
     mirrors = [
         "https://overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.openstreetmap.ru/api/interpreter",
         "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     ]
-    last_err = None
+    headers = {"User-Agent": "Campera/1.0 travel-app campera.app contact@campera.app"}
+    last_err = "no mirrors tried"
     for mirror in mirrors:
         try:
-            async with httpx.AsyncClient(timeout=28) as client:
-                resp = await client.post(mirror, data={"data": request.query})
+            async with httpx.AsyncClient(timeout=18) as client:
+                resp = await client.post(
+                    mirror, data={"data": request.query}, headers=headers
+                )
+                if resp.status_code in (429, 503, 502):
+                    last_err = f"HTTP {resp.status_code} da {mirror}"
+                    await asyncio.sleep(0.3)
+                    continue
                 resp.raise_for_status()
                 return resp.json()
         except Exception as e:
