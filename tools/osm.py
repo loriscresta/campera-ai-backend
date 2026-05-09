@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Strumenti OSM/Overpass per gli agenti Claude.
 Ogni funzione è pensata per essere chiamata come tool da Claude.
