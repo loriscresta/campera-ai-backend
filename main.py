@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Campera AI Backend — FastAPI
 Agenti Claude per pianificazione viaggi camper intelligente.
