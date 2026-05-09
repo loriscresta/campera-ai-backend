@@ -145,3 +145,31 @@ async def api_generate_trip_stream(request: TripRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+# ── Proxy Overpass (evita 429 dal browser) ─────────────────────────
+class OverpassProxyRequest(BaseModel):
+    query: str
+
+@app.post("/api/proxy-overpass")
+async def proxy_overpass(request: OverpassProxyRequest):
+    """
+    Esegue query Overpass server-side con mirror fallback.
+    Elimina i 429 Too Many Requests dal frontend.
+    """
+    import httpx
+    mirrors = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    ]
+    last_err = None
+    for mirror in mirrors:
+        try:
+            async with httpx.AsyncClient(timeout=28) as client:
+                resp = await client.post(mirror, data={"data": request.query})
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise HTTPException(503, f"Overpass non disponibile: {last_err}")
