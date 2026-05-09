@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 POIAgent — Il cuore dell'intelligenza di Campera.
 
