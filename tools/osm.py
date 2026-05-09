@@ -109,11 +109,11 @@ async def search_pois_overpass(
     radius_m = int(radius_km * 1000)
     lines = CATEGORY_QUERIES.get(categoria, ["node[tourism=attraction]"])
     query_lines = "\n".join(f"  {l}(around:{radius_m},{lat},{lng});" for l in lines)
-    query = f"[out:json][timeout:25];\n(\n{query_lines}\n);\nout body center {limit};"
+    query = f"[out:json][timeout:10];\n(\n{query_lines}\n);\nout body center {limit};"
     
     for mirror in OVERPASS_MIRRORS:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(mirror, data={"data": query})
                 resp.raise_for_status()
                 data = resp.json()

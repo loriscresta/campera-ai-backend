@@ -75,10 +75,17 @@ async def curate_pois_for_stop(
     cats = (cats or STILE_CATEGORIE["default"])[:4]
 
     # 2. Ricerca Overpass parallela (timeout ridotto a 10s per categoria)
-    tasks = [
-        search_pois_overpass(lat, lng, cat, radius_km=15, limit=15)
-        for cat in cats
-    ]
+    async def safe_search(cat):
+        try:
+            return await asyncio.wait_for(
+                search_pois_overpass(lat, lng, cat, radius_km=12, limit=15),
+                timeout=12.0
+            )
+        except Exception as e:
+            print(f"[POIAgent] {cat} timeout/err: {e}")
+            return []
+
+    tasks = [safe_search(cat) for cat in cats]
     results_per_cat = await asyncio.gather(*tasks, return_exceptions=True)
 
     # 3. Aggrega con fallback nomi
