@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 TripOrchestrator — Coordina tutti gli agenti per generare un viaggio completo.
 
