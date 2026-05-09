@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 NarratorAgent — Genera il racconto coinvolgente per ogni tappa del viaggio.
 
