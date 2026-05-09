@@ -1,14 +1,13 @@
 from __future__ import annotations
 """
 POIAgent — FAST: ricerca OSM parallela + una sola chiamata Claude.
-Tempi: ~8-15s invece di 60-90s del loop tool_use.
+~10-15s invece di 60-90s del loop tool_use.
 """
 import json
 import asyncio
 from anthropic import AsyncAnthropic
 from tools.osm import search_pois_overpass, EMOJI_MAP
 
-# Mappa stile → categorie OSM (evita laghi — relazioni enormi, lente)
 STILE_CATEGORIE = {
     "natura":      ["natura", "panorami"],
     "storia":      ["attrazioni", "borghi"],
@@ -19,9 +18,18 @@ STILE_CATEGORIE = {
     "default":     ["attrazioni", "natura", "panorami"],
 }
 
+FALLBACK_NAMES = {
+    "panorami":   "Punto Panoramico",
+    "natura":     "Area Naturale",
+    "spiagge":    "Spiaggia",
+    "attrazioni": "Attrazione",
+    "borghi":     "Borgo Storico",
+    "ristoranti": "Ristorante",
+}
+
 SYSTEM_PROMPT = """Sei l'agente POI di Campera, un'app per viaggiatori in camper italiani.
 Ti vengono forniti POI trovati vicino a una sosta. Il tuo compito:
-- Seleziona i 3-4 highlights più rilevanti e interessanti per questo utente
+- Seleziona i 3-4 highlights più rilevanti per questo utente
 - Considera il profilo (stili, bambini, animali, budget)
 - Dai priorità a luoghi unici e autentici (no catene commerciali)
 - Includi almeno: 1 posto naturale/panorama + 1 cosa "da non perdere" locale
@@ -42,14 +50,14 @@ Rispondi SOLO con questo JSON (niente altro testo):
   "consiglio_zona": "..."
 }"""
 
-# Nomi fallback per POI senza tag "name"
-FALLBACK_NAMES = {
-    "panorami":  "Punto Panoramico",
-    "natura":    "Area Naturale",
-    "spiagge":   "Spiaggia",
-    "attrazioni": "Attrazione",
-    "borghi":    "Borgo Storico",
-}
+
+async def _safe_search(lat: float, lng: float, cat: str) -> list:
+    """Ricerca OSM con gestione errori — non lancia mai eccezioni."""
+    try:
+        return await search_pois_overpass(lat, lng, cat, radius_km=12, limit=15)
+    except Exception as e:
+        print(f"[POIAgent] OSM {cat} error: {type(e).__name__}: {e}")
+        return []
 
 
 async def curate_pois_for_stop(
@@ -61,12 +69,12 @@ async def curate_pois_for_stop(
     model: str = "claude-sonnet-4-5",
 ) -> dict:
     """FAST PATH: OSM parallelo → una sola chiamata Claude."""
-    stili   = profilo.get("stili", ["natura"])
+    stili       = profilo.get("stili", ["natura"])
     con_bambini = profilo.get("con_bambini", False)
     con_animali = profilo.get("con_animali", False)
-    budget  = profilo.get("budget", "medio")
+    budget      = profilo.get("budget", "medio")
 
-    # 1. Categorie de-duplicate (max 4)
+    # 1. Categorie (de-duplicate, max 4)
     cats: list[str] = []
     for s in stili:
         for c in STILE_CATEGORIE.get(s, STILE_CATEGORIE["default"]):
@@ -74,54 +82,43 @@ async def curate_pois_for_stop(
                 cats.append(c)
     cats = (cats or STILE_CATEGORIE["default"])[:4]
 
-    # 2. Ricerca Overpass parallela (timeout ridotto a 10s per categoria)
-    async def safe_search(cat):
-        try:
-            return await asyncio.wait_for(
-                search_pois_overpass(lat, lng, cat, radius_km=12, limit=15),
-                timeout=12.0
-            )
-        except Exception as e:
-            print(f"[POIAgent] {cat} timeout/err: {e}")
-            return []
+    # 2. Ricerca Overpass in parallelo (timeout httpx=10s già impostato in osm.py)
+    results_per_cat: list = await asyncio.gather(
+        *[_safe_search(lat, lng, cat) for cat in cats]
+    )
 
-    tasks = [safe_search(cat) for cat in cats]
-    results_per_cat = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # 3. Aggrega con fallback nomi
+    # 3. Aggrega rimuovendo duplicati
     all_pois: list[dict] = []
-    seen_names: set[str] = set()
+    seen: set[str] = set()
     for cat, res in zip(cats, results_per_cat):
-        if isinstance(res, Exception):
-            print(f"[POIAgent] OSM error {cat}: {res}")
+        if not isinstance(res, list):
             continue
         for p in res:
-            nome = p.get("nome") or FALLBACK_NAMES.get(cat)
-            if not nome or nome in seen_names:
+            nome = p.get("nome") or FALLBACK_NAMES.get(cat, "")
+            if not nome or nome in seen:
                 continue
-            seen_names.add(nome)
+            seen.add(nome)
             all_pois.append({
-                "nome": nome,
-                "lat":  p["lat"],
-                "lng":  p["lng"],
-                "categoria": cat,
-                "emoji": EMOJI_MAP.get(cat, "📍"),
-                "distanza_km": round(p["distanza_km"], 1),
+                "nome":        nome,
+                "lat":         p["lat"],
+                "lng":         p["lng"],
+                "categoria":   cat,
+                "emoji":       EMOJI_MAP.get(cat, "📍"),
+                "distanza_km": round(p.get("distanza_km", 0), 1),
             })
 
     if not all_pois:
         return {"highlights": [], "consiglio_zona": "Zona tranquilla, ideale per riposare."}
 
     all_pois.sort(key=lambda x: x["distanza_km"])
-    all_pois = all_pois[:30]
+    poi_json = json.dumps(all_pois[:30], ensure_ascii=False, indent=2)
 
     # 4. Una sola chiamata Claude
     user_msg = (
         f"Sosta: {nome_sosta} ({lat:.4f}, {lng:.4f})\n"
         f"Profilo: stili={','.join(stili)} | bambini={'sì' if con_bambini else 'no'}"
         f" | animali={'sì' if con_animali else 'no'} | budget={budget}\n\n"
-        f"POI trovati nelle vicinanze:\n"
-        f"{json.dumps(all_pois, ensure_ascii=False, indent=2)}\n\n"
+        f"POI trovati nelle vicinanze:\n{poi_json}\n\n"
         f"Seleziona i 3-4 highlights migliori per questo utente."
     )
 
@@ -138,6 +135,6 @@ async def curate_pois_for_stop(
         if start >= 0 and end > start:
             return json.loads(text[start:end])
     except Exception as e:
-        print(f"[POIAgent] Claude error: {e}")
+        print(f"[POIAgent] Claude error: {type(e).__name__}: {e}")
 
     return {"highlights": [], "consiglio_zona": ""}
