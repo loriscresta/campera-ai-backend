@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 CampsiteAgent — Sceglie la sosta notturna migliore per ogni giorno.
 
