@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Meteo per ogni tappa via Open-Meteo (gratuito, nessuna API key richiesta).
 """
@@ -75,4 +76,3 @@ def _wmo_to_emoji(code: Optional[int]) -> str:
     if code in (95,96,99): return "⛈️"
     return "🌤️"
 
-from typing import Optional
