@@ -18,7 +18,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "lat": {"type": "number"},
                 "lng": {"type": "number"},
-                "radius_km": {"type": "number", "default": 20},
+                "radius_km": {"type": "number", "default": 12, "maximum": 15},
             },
             "required": ["lat", "lng"]
         }
@@ -74,7 +74,7 @@ Profilo:
 - Budget: {budget}
 
 Cerca campeggi e aree sosta nella zona e scegli il migliore.
-Puoi cercare con radius_km fino a 25 km se necessario."""
+Usa radius_km max 15 km per mantenere la sosta vicina al percorso."""
 
     messages = [{"role": "user", "content": user_msg}]
 
@@ -109,12 +109,12 @@ Puoi cercare con radius_km fino a 25 km se necessario."""
             if block.type == "tool_use" and block.name == "search_campsites":
                 inp = block.input
                 results = await search_campsites_near_point(
-                    inp["lat"], inp["lng"], inp.get("radius_km", 20)
+                    inp["lat"], inp["lng"], min(inp.get("radius_km", 12), 15)
                 )
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": json.dumps(results[:20], ensure_ascii=False),
+                    "content": json.dumps(results[:15], ensure_ascii=False),
                 })
         if tool_results:
             messages.append({"role": "user", "content": tool_results})

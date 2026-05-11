@@ -88,7 +88,7 @@ async def generate_trip(request: TripRequest) -> TripResponse:
             giorno=giorno,
             profilo=profilo,
             anthropic_client=client,
-            model=settings.claude_model,
+            model=settings.fast_model,  # Haiku: scelta sosta non richiede Sonnet
         )
         
         # 3b: Weather Agent (non dipende da campsite)
@@ -137,7 +137,7 @@ async def generate_trip(request: TripRequest) -> TripResponse:
             profilo=profilo,
             zona_descrizione=zona_desc,
             anthropic_client=client,
-            model=settings.claude_model,
+            model=settings.fast_model,  # Haiku: narrativa breve, veloce e leggera
         )
         
         return {
@@ -202,7 +202,7 @@ async def generate_trip(request: TripRequest) -> TripResponse:
         soste=soste_dati,
         profilo=profilo,
         anthropic_client=client,
-        model=settings.claude_model,
+        model=settings.fast_model,  # Haiku ok per titolo/sommario
     )
     
     print(f"[Orchestrator] 🎉 Viaggio completato: '{titolo}'")
