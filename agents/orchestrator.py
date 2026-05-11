@@ -14,7 +14,7 @@ import asyncio
 import uuid
 from anthropic import AsyncAnthropic
 
-from models.trip import TripRequest, TripResponse, Sosta
+from models.trip import TripRequest, TripResponse, Sosta, normalize_stili
 from tools.mapbox import get_route, interpolate_route_points, reverse_geocode
 from tools.weather import get_weather_for_stop
 from agents.poi_agent import curate_pois_for_stop
@@ -60,6 +60,7 @@ async def generate_trip(request: TripRequest) -> TripResponse:
     
     # ── STEP 3: Campsite + POI + Meteo in parallelo per ogni tappa ───
     profilo = request.profilo.model_dump()
+    profilo["stili"] = normalize_stili(profilo.get("stili", ["natura"]))
     
     # Calcola data per ogni tappa
     from datetime import datetime, timedelta
